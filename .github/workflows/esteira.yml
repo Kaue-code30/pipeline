@@ -341,7 +341,7 @@ jobs:
             echo '| Etapa | Resultado | Relatório (artifact) |'
             echo '| --- | --- | --- |'
             jq -r '
-              [["gitleaks","01 - Secrets","relatorio-01-gitleaks"],
+              [["gitleaks","01 - Verificação de segredos","relatorio-01-gitleaks"],
                ["semgrep","02 - SAST","relatorio-02-semgrep"],
                ["build","03 - Build e testes","relatorio-03-build"],
                ["sca","04 - SCA","relatorio-04-trivy-sca"],

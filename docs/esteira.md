@@ -24,6 +24,11 @@ executar. Etapas puladas (`skipped`) não produzem artifacts. Falhas anteriores
 à criação dos relatórios, como erro no checkout, podem deixar um job sem artifact.
 O Gitleaks mascara os segredos nos relatórios e nos logs.
 
+O arquivo `.gitleaksignore` documenta uma exceção por fingerprint para um
+falso positivo confirmado: o rótulo da tabela jq no commit `2157341` foi
+interpretado como chave de API. O rótulo foi alterado, e a exceção cobre
+somente aquela ocorrência no histórico, sem excluir o workflow do scanner.
+
 ## Build e publicação
 
 O build instala as dependências em um virtualenv limpo, executa `pip check`,

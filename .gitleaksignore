@@ -1,0 +1,4 @@
+# Falso positivo revisado: rótulo da tabela jq, não é uma credencial.
+# A linha combinava "Secrets" com o nome do artifact relatorio-01-gitleaks.
+# Somente esta ocorrência histórica é ignorada; o arquivo continua analisado.
+215734134c6f6ef2ee161b0bd15986a6be52588a:.github/workflows/esteira.yml:generic-api-key:344
