@@ -227,6 +227,14 @@ jobs:
             --severity HIGH,CRITICAL --exit-code 1 \
             --format json --output /work/reports/trivy-image.json \
             2>&1 | tee reports/trivy-image.log
+      - name: Exibir vulnerabilidades da imagem
+        if: always()
+        run: |
+          if [ -s reports/trivy-image.json ]; then
+            jq -r '.Results[]? | .Target as $target | .Vulnerabilities[]? |
+              [$target, .PkgName, .InstalledVersion, .FixedVersion, .VulnerabilityID, .Severity] | @tsv' \
+              reports/trivy-image.json | tee reports/vulnerabilidades.tsv
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

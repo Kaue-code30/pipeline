@@ -61,6 +61,8 @@ O pacote fonte é validado por SHA-256 antes do build da imagem.
 A imagem usa Python Alpine, pacotes de sistema atualizados, usuário não-root
 e Gunicorn. Dependências sem uso foram removidas. HIGH/CRITICAL bloqueiam,
 mesmo sem correção disponível; não existe `ignore-unfixed`.
+O setuptools da imagem base é atualizado pela dependência explícita
+`setuptools>=83.0.0`, corrigindo o path traversal CVE-2025-47273.
 
 Na `main`, o `GITHUB_TOKEN` publica no GHCR com `packages: write`.
 PRs constroem e analisam sem publicar. O nome é
