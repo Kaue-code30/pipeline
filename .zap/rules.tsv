@@ -1,9 +1,10 @@
-# Politica de portao do OWASP ZAP
-# FAIL   = bloqueia o build (risco alto e inequivoco)
-# WARN   = so avisa, nao bloqueia
+# Politica informativa do OWASP ZAP Baseline nesta esteira.
+# Achados FAIL/WARN sao publicados; erros operacionais bloqueiam o job.
+# FAIL   = achado classificado como falha no relatorio
+# WARN   = aviso no relatorio
 # IGNORE = regra desligada para esta aplicacao
 
-# --- Injecao e execucao de codigo: sempre FAIL ---
+# --- Injecao e execucao de codigo: WARN neste laboratorio ---
 40018	WARN	(SQL Injection)
 40012	WARN	(Cross Site Scripting - Reflected)
 40014	WARN	(Cross Site Scripting - Persistent)

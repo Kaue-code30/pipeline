@@ -5,3 +5,9 @@ regras-banco/
 .git
 README.md
 sonar-project.properties
+.github/
+.venv/
+tests/
+scripts/
+docs/
+reports/

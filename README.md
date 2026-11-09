@@ -15,6 +15,16 @@ Este projeto não deve ser:
 
 Ele deve rodar apenas dentro da VM isolada do laboratório.
 
+## Esteira de pipeline
+
+A esteira GitHub Actions implementa Gitleaks, Semgrep, build e testes Python,
+Trivy SCA, Docker Buildx + GHCR, Trivy da imagem, homologação com ZAP Baseline
+e produção do laboratório com aprovação manual. O resumo executa mesmo
+quando uma etapa falha.
+
+Veja [configuração, relatórios e aprovação de produção](docs/esteira.md).
+Os achados intencionais do laboratório bloqueiam os respectivos gates.
+
 ## Estrutura
 
 ```

@@ -1,0 +1,361 @@
+name: Esteira DevSecOps
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: esteira-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.24.2
+  SEMGREP_IMAGE: semgrep/semgrep:1.116.0
+  TRIVY_IMAGE: aquasec/trivy:0.61.1
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.16.1
+
+jobs:
+  gitleaks:
+    name: 01 - Verificação de secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gitleaks (histórico completo)
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" \
+            git . --config .gitleaks.toml --redact \
+            --report-format json --report-path reports/gitleaks.json \
+            2>&1 | tee reports/gitleaks.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-01-gitleaks
+          path: reports/
+          if-no-files-found: error
+
+  semgrep:
+    name: 02 - Análise estática (SAST)
+    needs: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Semgrep (regras locais)
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE" \
+            semgrep scan --config regras-banco/ --error --strict \
+            --metrics off --json --output reports/semgrep.json \
+            app.py config.py modulos/ 2>&1 | tee reports/semgrep.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-02-semgrep
+          path: reports/
+          if-no-files-found: error
+
+  build:
+    name: 03 - Build, dependências e artefato
+    needs: semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar, testar e empacotar
+        run: |
+          mkdir -p reports package
+          set -o pipefail
+          {
+            python -m venv .venv
+            .venv/bin/python -m pip install -r requirements.txt
+            .venv/bin/python -m pip check
+            .venv/bin/python -m compileall -q app.py config.py modulos
+            .venv/bin/python -m unittest discover -s tests -v
+            .venv/bin/python -m pip freeze > reports/requirements-resolved.txt
+            cp app.py config.py Dockerfile package/
+            cp -r modulos package/
+            find package -type d -name __pycache__ -prune -exec rm -r {} +
+            cp reports/requirements-resolved.txt package/requirements.txt
+            tar -czf reports/app.tar.gz -C package .
+            (cd reports && sha256sum app.tar.gz > app.sha256)
+          } 2>&1 | tee reports/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-03-build
+          path: reports/
+          if-no-files-found: error
+
+  sca:
+    name: 04 - SCA de dependências
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: relatorio-03-build
+          path: build/
+      - name: Trivy filesystem (dependências resolvidas)
+        run: |
+          mkdir -p reports dependencies
+          cp build/requirements-resolved.txt dependencies/requirements.txt
+          set -o pipefail
+          docker run --rm -v "$PWD:/work" "$TRIVY_IMAGE" fs \
+            --scanners vuln --severity HIGH,CRITICAL --exit-code 1 \
+            --format json --output /work/reports/trivy-sca.json \
+            /work/dependencies 2>&1 | tee reports/trivy-sca.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-04-trivy-sca
+          path: reports/
+          if-no-files-found: error
+
+  docker:
+    name: 05 - Docker build e push
+    needs: sca
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: relatorio-03-build
+          path: build/
+      - name: Preparar contexto e nome da imagem
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir -p context reports
+          (cd build && sha256sum --check app.sha256)
+          tar -xzf build/app.tar.gz -C context
+          echo "name=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Construir a imagem testada
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: context
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
+      - name: Exportar imagem e publicar na main
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        run: |
+          set -o pipefail
+          {
+            docker save "$IMAGE:$GITHUB_SHA" | gzip > reports/image.tar.gz
+            docker image inspect "$IMAGE:$GITHUB_SHA" > reports/image.json
+            if [ "$PUBLISH" = true ]; then
+              docker push "$IMAGE:$GITHUB_SHA"
+            fi
+          } 2>&1 | tee reports/docker-build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-05-docker-build
+          path: reports/
+          retention-days: 3
+          if-no-files-found: error
+
+  image_scan:
+    name: 06 - Scan da imagem
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: relatorio-05-docker-build
+          path: image/
+      - name: Trivy image (mesma imagem do build)
+        run: |
+          mkdir -p reports
+          gunzip image/image.tar.gz
+          set -o pipefail
+          docker run --rm -v "$PWD:/work" "$TRIVY_IMAGE" image \
+            --input /work/image/image.tar --scanners vuln \
+            --severity HIGH,CRITICAL --exit-code 1 \
+            --format json --output /work/reports/trivy-image.json \
+            2>&1 | tee reports/trivy-image.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-06-trivy-image
+          path: reports/
+          if-no-files-found: error
+
+  homologacao:
+    name: 07 - Homologação e DAST
+    needs: [image_scan, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: relatorio-05-docker-build
+          path: image/
+      - name: Subir homologação isolada e executar ZAP Baseline
+        env:
+          IMAGE: ${{ needs.docker.outputs.image }}
+        run: |
+          mkdir -p reports
+          chmod 777 reports
+          docker pull "$ZAP_IMAGE"
+          docker load -i image/image.tar.gz
+          docker network create --internal homologacao
+          docker run -d --name app-homologacao --network homologacao \
+            -e SECRET_KEY="$(openssl rand -hex 32)" \
+            "$IMAGE:$GITHUB_SHA"
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec app-homologacao python -c \
+              'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5000/saude", timeout=2)' ; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          [ "$ready" = true ] || { echo 'Homologação indisponível'; exit 1; }
+          set +e
+          docker run --rm --network homologacao \
+            -v "$PWD/reports:/zap/wrk:rw" \
+            -v "$PWD/.zap/rules.tsv:/zap/rules.tsv:ro" \
+            "$ZAP_IMAGE" zap-baseline.py -t http://app-homologacao:5000 \
+            -c /zap/rules.tsv -J zap.json -r zap.html > reports/zap.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > reports/zap-exit-code.txt
+          cat reports/zap.log
+          # 1/2 são achados informativos; falha operacional (3+) bloqueia.
+          [ "$status" -le 2 ] && [ -s reports/zap.json ]
+      - name: Coletar logs e remover homologação
+        if: always()
+        run: |
+          mkdir -p reports
+          docker logs app-homologacao > reports/homologacao.log 2>&1 || true
+          docker rm -f app-homologacao || true
+          docker network rm homologacao || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-07-homologacao-zap
+          path: reports/
+          if-no-files-found: error
+
+  producao:
+    name: 08 - Aprovação e produção
+    needs: [homologacao, docker]
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      vars.ENABLE_PRODUCTION == 'true'
+    environment: producao
+    runs-on: [self-hosted, linux, producao-lab]
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-producao
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: relatorio-05-docker-build
+          path: image/
+      - name: Implantar a imagem aprovada no laboratório
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          bash scripts/deploy-lab.sh image/image.tar.gz 2>&1 | tee reports/producao.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-08-producao
+          path: reports/
+          if-no-files-found: error
+
+  resumo:
+    name: Resumo da Esteira
+    if: always()
+    needs: [gitleaks, semgrep, build, sca, docker, image_scan, homologacao, producao]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gerar resumo com jq
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p reports
+          printf '%s\n' "$RESULTS" > reports/resultados.json
+          {
+            echo '# Resumo da Esteira'
+            echo
+            echo "Execução: $RUN_URL"
+            echo
+            echo '| Etapa | Resultado | Relatório (artifact) |'
+            echo '| --- | --- | --- |'
+            jq -r '
+              [["gitleaks","01 - Secrets","relatorio-01-gitleaks"],
+               ["semgrep","02 - SAST","relatorio-02-semgrep"],
+               ["build","03 - Build e testes","relatorio-03-build"],
+               ["sca","04 - SCA","relatorio-04-trivy-sca"],
+               ["docker","05 - Docker build e push","relatorio-05-docker-build"],
+               ["image_scan","06 - Scan da imagem","relatorio-06-trivy-image"],
+               ["homologacao","07 - Homologação e DAST","relatorio-07-homologacao-zap"],
+               ["producao","08 - Produção","relatorio-08-producao"]]
+              as $stages | $stages[] as $s |
+              "| \($s[1]) | \(.[$s[0]].result) | \($s[2]) |"
+            ' reports/resultados.json
+            echo
+            echo 'Etapas skipped não geram relatórios. Produção exige habilitação e aprovação no Environment.'
+          } | tee reports/resumo.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resumo-da-esteira
+          path: reports/
