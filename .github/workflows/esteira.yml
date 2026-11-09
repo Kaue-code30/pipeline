@@ -195,6 +195,9 @@ jobs:
           {
             docker save "$IMAGE:$GITHUB_SHA" | gzip > reports/image.tar.gz
             docker image inspect "$IMAGE:$GITHUB_SHA" > reports/image.json
+            docker run --rm --network none --entrypoint python "$IMAGE:$GITHUB_SHA" \
+              -c 'import importlib.metadata as m, json; print(json.dumps(sorted([{ "name": d.metadata["Name"], "version": d.version } for d in m.distributions()], key=lambda d: d["name"]), indent=2))' \
+              > reports/runtime-dependencies.json
             if [ "$PUBLISH" = true ]; then
               docker push "$IMAGE:$GITHUB_SHA"
             fi

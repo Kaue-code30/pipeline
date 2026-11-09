@@ -4,7 +4,9 @@ WORKDIR /app
 RUN apk upgrade --no-cache
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir -r requirements.txt
+    && python -m pip install --no-cache-dir -r requirements.txt \
+    && python -m pip uninstall -y pip \
+    && rm -rf /usr/local/lib/python3.12/ensurepip
 RUN addgroup -S appgroup && adduser -S -G appgroup appuser
 COPY --chown=appuser:appgroup app.py config.py ./
 COPY --chown=appuser:appgroup modulos/ ./modulos/

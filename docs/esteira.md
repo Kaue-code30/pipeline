@@ -63,6 +63,10 @@ e Gunicorn. Dependências sem uso foram removidas. HIGH/CRITICAL bloqueiam,
 mesmo sem correção disponível; não existe `ignore-unfixed`.
 O setuptools da imagem base é atualizado pela dependência explícita
 `setuptools>=83.0.0`, corrigindo o path traversal CVE-2025-47273.
+Após instalar as dependências, o Dockerfile remove `pip` e `ensurepip` da
+imagem final. Isso também remove a cópia antiga de setuptools embutida no
+pip; atualizar apenas o setuptools instalado não atualiza essa cópia interna.
+O artifact do build inclui `runtime-dependencies.json`, extraído da imagem.
 
 Na `main`, o `GITHUB_TOKEN` publica no GHCR com `packages: write`.
 PRs constroem e analisam sem publicar. O nome é
