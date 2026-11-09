@@ -43,6 +43,16 @@ jobs:
             git . --config .gitleaks.toml --redact \
             --report-format json --report-path reports/gitleaks.json \
             2>&1 | tee reports/gitleaks.log
+      - name: Gitleaks no estado atual (sem baseline)
+        run: |
+          mkdir -p snapshot reports
+          git archive HEAD | tar -x -C snapshot
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD/snapshot:/src:ro" -v "$PWD/reports:/reports" \
+            -v "$PWD/.gitleaks.toml:/config.toml:ro" "$GITLEAKS_IMAGE" \
+            dir /src --config /config.toml --gitleaks-ignore-path /dev/null --redact \
+            --report-format json --report-path /reports/gitleaks-atual.json \
+            2>&1 | tee reports/gitleaks-atual.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -288,11 +298,9 @@ jobs:
   producao:
     name: 08 - Aprovação e produção
     needs: [homologacao, docker]
-    if: >-
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
-      vars.ENABLE_PRODUCTION == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     environment: producao
-    runs-on: [self-hosted, linux, producao-lab]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
       group: deploy-producao
@@ -312,6 +320,13 @@ jobs:
           mkdir -p reports
           set -o pipefail
           bash scripts/deploy-lab.sh image/image.tar.gz 2>&1 | tee reports/producao.log
+      - name: Coletar logs e remover ambiente temporário
+        if: always()
+        run: |
+          mkdir -p reports
+          docker logs simulador-cartoes > reports/container.log 2>&1 || true
+          docker rm -f simulador-cartoes || true
+          docker network rm producao-lab || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -353,7 +368,7 @@ jobs:
               "| \($s[1]) | \(.[$s[0]].result) | \($s[2]) |"
             ' reports/resultados.json
             echo
-            echo 'Etapas skipped não geram relatórios. Produção exige habilitação e aprovação no Environment.'
+            echo 'Etapas skipped não geram relatórios. Produção temporária exige aprovação no Environment.'
           } | tee reports/resumo.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

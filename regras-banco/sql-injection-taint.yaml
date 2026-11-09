@@ -17,4 +17,9 @@ rules:
       - pattern: request.args.get(...)
       - pattern: request.form.get(...)
     pattern-sinks:
-      - pattern: $CONN.execute(...)
+      - patterns:
+          - pattern: $CONN.execute($SQL, ...)
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern: $CONN.executescript($SQL)
+          - focus-metavariable: $SQL

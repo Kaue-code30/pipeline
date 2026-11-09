@@ -2,11 +2,8 @@
 Simulador de Cartões de Crédito — aplicação de exemplo para o
 laboratório de SonarQube.
 
-ATENÇÃO: esta aplicação contém vulnerabilidades intencionais,
-distribuídas propositalmente entre os módulos, para servir de alvo de
-análise estática no laboratório. Não utilizar como referência de
-implementação segura, e não expor esta aplicação em rede alguma além
-do ambiente isolado do laboratório.
+As vulnerabilidades originais do exercício foram corrigidas para a
+esteira DevSecOps. O ambiente de execução continua sendo um laboratório.
 """
 
 from flask import Flask, jsonify, request
@@ -16,6 +13,36 @@ from modulos import autenticacao, cartoes, notificacoes, relatorios
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
+
+
+@app.route('/')
+def inicio():
+    return ('<!doctype html><html lang="pt-BR"><meta charset="utf-8">'
+            '<title>Simulador de cartões</title><h1>Simulador de cartões</h1>'
+            '<ul><li><a href="/saude">Saúde</a></li>'
+            '<li><a href="/cartoes">Cartões</a></li>'
+            '<li><a href="/fatura">Fatura</a></li>'
+            '<li><a href="/relatorio?formato=csv">Relatório CSV</a></li>'
+            '<li><a href="/diagnostico?cmd=saude">Diagnóstico</a></li></ul></html>')
+
+
+@app.errorhandler(ValueError)
+def entrada_invalida(error):
+    return jsonify({'erro': str(error)}), 400
+
+
+@app.errorhandler(FileNotFoundError)
+def arquivo_inexistente(error):
+    return jsonify({'erro': 'Arquivo não encontrado'}), 404
+
+
+@app.after_request
+def cabecalhos_seguranca(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'"
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route("/saude")

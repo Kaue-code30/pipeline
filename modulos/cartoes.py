@@ -1,27 +1,25 @@
-"""
-Módulo de consulta de cartões do Simulador de Cartões de Crédito.
-
-Contém vulnerabilidades intencionais de SQL Injection: os parâmetros
-recebidos da requisição são concatenados diretamente na query SQL,
-sem uso de consultas parametrizadas (Prepared Statements).
-"""
-
+"""Consultas SQLite parametrizadas para o banco de demonstração."""
 import sqlite3
-
+from contextlib import closing
 from flask import request
+import config
+
+
+def conectar():
+    conn = sqlite3.connect(config.DATABASE_PATH)
+    conn.execute('CREATE TABLE IF NOT EXISTS cartoes '
+                 '(numero TEXT, cpf_titular TEXT, fatura REAL)')
+    conn.commit()
+    return conn
+
 
 def consultar_fatura(numero_cartao):
-    """Consulta a fatura de um cartão usando query parametrizada."""
-    conn = sqlite3.connect("cartoes.db")
-    query = "SELECT fatura FROM cartoes WHERE numero = ?"
-    cursor = conn.execute(query, (numero_cartao,))
-    return cursor.fetchone()
+    with closing(conectar()) as conn:
+        cursor = conn.execute('SELECT fatura FROM cartoes WHERE numero = ?', (numero_cartao,))
+        return cursor.fetchone()
 
 
 def buscar_cartoes_cliente():
-    """Busca todos os cartões associados a um CPF usando query parametrizada."""
-    cpf = request.args.get("cpf")
-    conn = sqlite3.connect("cartoes.db")
-    sql = "SELECT * FROM cartoes WHERE cpf_titular = ?"
-    return conn.execute(sql, (cpf,)).fetchall()
-
+    cpf = request.args.get('cpf')
+    with closing(conectar()) as conn:
+        return conn.execute('SELECT * FROM cartoes WHERE cpf_titular = ?', (cpf,)).fetchall()

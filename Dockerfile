@@ -1,31 +1,15 @@
-# Dockerfile do Simulador de Cartões de Crédito
-# Usado no Laboratório de Segurança em Kubernetes (Minikube).
-#
-# Este Dockerfile segue boas práticas básicas de construção de imagem
-# (usuário não-root, imagem slim, dependências fixadas) porque o foco
-# deste laboratório é o hardening da CAMADA DE KUBERNETES — RBAC,
-# Network Policies, Pod Security e Secrets — não da imagem em si.
-# O código da aplicação, propositalmente, continua com as
-# vulnerabilidades estudadas nos laboratórios de SonarQube e Semgrep.
-
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 WORKDIR /app
-
+RUN apk upgrade --no-cache
 COPY requirements.txt .
-RUN apt update \
-	&& apt install gcc -y \
-	&& apt upgrade -y \
-	&& pip install --no-cache-dir -r requirements.txt \
-	&& apt clean \
-	&& rm -rf /var/lib/apt/lists/*
-
-COPY . .
-
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
-    && chown -R appuser:appgroup /app
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt
+RUN addgroup -S appgroup && adduser -S -G appgroup appuser
+COPY --chown=appuser:appgroup app.py config.py ./
+COPY --chown=appuser:appgroup modulos/ ./modulos/
 USER appuser
-
 EXPOSE 5000
-
-CMD ["python", "app.py"]
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/saude', timeout=2)"
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--access-logfile", "-", "app:app"]
